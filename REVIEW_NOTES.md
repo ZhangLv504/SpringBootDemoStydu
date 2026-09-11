@@ -1,6 +1,6 @@
-# Spring Boot 学习笔记（Demo 1-3 复习）
+# Spring Boot 学习笔记（Demo 1-4 复习）
 
-> 学习路径：REST 基础 → 持久化 → 校验与异常处理
+> 学习路径：REST 基础 → 持久化 → 校验异常 → 查询与分页
 > 每个 Demo 都是独立可运行的 Spring Boot 3.5.4 + Java 21 项目，前端由 Spring Boot 托管静态资源，前后端同端口打通。
 > 所有代码已推送到 GitHub：https://github.com/ZhangLv504/SpringBootDemoStydu
 
@@ -11,6 +11,7 @@
 - [Demo 1：REST 基础 + 三层架构 + 前后端打通](#demo-1rest-基础--三层架构--前后端打通)
 - [Demo 2：Spring Data JPA + H2 数据库](#demo-2spring-data-jpa--h2-数据库)
 - [Demo 3：参数校验 + 全局异常处理](#demo-3参数校验--全局异常处理)
+- [Demo 4：JPA 自定义查询与分页](#demo-4jpa-自定义查询与分页)
 - [速查表：三层架构与关键注解](#速查表三层架构与关键注解)
 
 ---
@@ -252,6 +253,88 @@ GET  /api/books/999                             → 404 + {"status":404,"message
 - **多端复用**：Web、App、小程序可以各自按需渲染，后端不用为每种客户端写不同文案
 - **国际化 i18n**：前端拿到 `errors` 的字段名+错误码，可以自己翻译成不同语言
 - **语义化**：`{field: "title", message: "书名不能为空"}` 便于排查和自动化处理，而拼好的一句话无法被程序区分是哪里的错
+
+---
+
+## Demo 4：JPA 自定义查询与分页
+
+### 基础信息
+
+| 项目 | 内容 |
+|---|---|
+| 目录 | `demo4-query` |
+| 场景 | 图书搜索与分页：按书名模糊搜、按作者查、多字段搜、分页 |
+| 技术栈 | Spring Data JPA 的三种查询能力（方法名派生 / `@Query` / `Pageable`） |
+| 新增 | `config/DataSeeder`（启动种子数据 8 本书）、`@Query`、`Pageable`，前端加了搜索框 |
+| 接口 | `GET /api/books?keyword=`、`GET /api/books/by-author?author=`、`GET /api/books/search?kw=`、`GET /api/books/paged?page=&size=` |
+
+### 三把钥匙（核心知识点）
+
+**第 1 把：方法名派生查询** —— 方法名本身就是 SQL 说明书
+```java
+List<Book> findByTitleContainingIgnoreCase(String keyword);
+// → select * from books where lower(title) like concat('%', lower(?), '%')
+```
+- 拆解：`findBy`(查) + `Title`(字段) + `Containing`(包含=LIKE %kw%) + `IgnoreCase`(忽略大小写)
+- 常见组合：`And`/`Or`/`GreaterThan`/`LessThan`/`OrderBy`/`Top10` 等
+
+**第 2 把：`@Query` 手写 JPQL** —— 复杂/多字段查询用注解写
+```java
+@Query("SELECT b FROM Book b WHERE LOWER(b.title) LIKE ... OR LOWER(b.author) LIKE ...")
+List<Book> search(@Param("kw") String kw);
+```
+- `:kw` 是命名参数，`@Param` 绑定
+- JPQL 面向**实体和字段**（`b.title`）而非数据库表列
+
+**第 3 把：`Pageable` 分页** —— 不用自己拼 LIMIT/OFFSET
+```java
+Page<Book> findAll(Pageable pageable);   // 由 JpaRepository 提供
+```
+- Controller 用 `PageRequest.of(page, size)` 构造
+- 返回 `Page`，自带 `content`(本页)、`totalElements`(总条数)、`totalPages`(总页数)
+- 实测：`page=0&size=3` → 本页 3、总 8、共 3 页
+
+### 种子数据
+
+- `DataSeeder` 实现 `CommandLineRunner`：Spring 容器就绪后自动执行
+- 用 `repository.count() > 0` 判断表为空才插入，避免重复种子
+
+### 复习题与答案
+
+**1. `findByTitleContainingIgnoreCase` 到底怎么翻译成 SQL？方法名有哪些"语法"？**
+
+- 分为三段：`findBy` + 字段名 `Title` + 修饰词 `Containing`、`IgnoreCase`
+- 每个部分都是有意义的约定：`Containing`→`LIKE %kw%`、`IgnoreCase`→`lower()`
+- 更多修饰词：`And`/`Or`/`GreaterThan`/`LessThanEqual`/`Between`/`OrderByXxxDesc`/`Top3`
+- 方法名写错/字段名对不上，启动时 Spring Data 会**直接甩异常**提示你（不是在运行时才挂）——这是个贴心特性
+
+**2. 派生查询和 `@Query` 各自适合什么场景？**
+
+- **派生查询**：简单单条件（按字段查/模糊/排序），方法名清晰可读
+- **`@Query`**：多字段关联（标题 OR 作者）、复杂条件、需要写原生 SQL（`nativeQuery=true`）时
+- 原则：`@Query` 里的 JPQL 写明文 SQL，维护成本高，能派生就用派生，复杂才手写
+
+**3. 为什么返回 `Page<Book>` 而不是 `List<Book>`？`Page` 对象里有什么？**
+
+- 分页不仅要"这一页的数据"，还需要"总共多少条/共几页"供前端渲染分页条
+- `Page` 自带：`content`(本页数据)、`totalElements`(总条数)、`totalPages`(总页数)、`number`(当前页码)、`size`(页大小)
+- 前端拿到 `content` 渲染列表、拿 `totalPages` 做页码分页控件
+
+**4. `page` 和 `size` 从哪来？`PageRequest.of(page, size)` 的 `page` 从 0 还是 1 开始？**
+
+- 从 URL 查询参数来：`/api/books/paged?page=0&size=3`
+- `PageRequest.of` 的 **page 从 0 开始**（第 1 页是 page=0）——这是 Spring Data 的约定，容易和"第 1 页=1"的习惯混淆
+
+**5. 为什么用 `CommandLineRunner` 做种子数据？怎么避免每次启动都重复插入？**
+
+- `CommandLineRunner` 在 Spring 容器初始化完成后、应用真正对外服务前执行一次，适合初始化种子数据、预热缓存等
+- 用 `repository.count() > 0` 判断：表非空就跳过，保证只插一次
+
+**6. 前端搜索是怎么"打通"的？**
+
+- 搜索框输入后 `fetch('/api/books?keyword=' + encodeURIComponent(kw))`
+- 后端 `list(@RequestParam(required=false) String keyword)`：没传就查全部，传了就按标题模糊搜
+- `encodeURIComponent` 编码中文关键词，避免 URL 里直接塞汉字导致乱码
 
 ---
 
