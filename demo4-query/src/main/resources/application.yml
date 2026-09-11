@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    # H2 内存数据库：不落盘，应用一停数据即消失（学习用足够）
+    url: jdbc:h2:mem:bookdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      # 根据实体自动建表/更新表结构（仅开发学习用；生产应用 Flyway，见后）
+      ddl-auto: update
+    show-sql: true   # 控制台打印 SQL，方便看 Hibernate 生成了什么
+    open-in-view: false
+  h2:
+    console:
+      enabled: true      # 开启 H2 网页控制台，访问 /h2-console 直观查表
+      path: /h2-console
+
+server:
+  port: 8080
